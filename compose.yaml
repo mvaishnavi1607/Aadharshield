@@ -1,0 +1,15 @@
+﻿services:
+  aadharshield:
+    build: .
+    container_name: aadharshield-app
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    env_file:
+      - .env
+    environment:
+      AADHARSHIELD_HOST: "0.0.0.0"
+      AADHARSHIELD_PORT: "8790"
+      AADHARSHIELD_DATA_DIR: "/app/data"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-multipart
+psycopg[binary]
+pyjwt
+bcrypt
+cryptography
+pillow
+numpy
+opencv-python
+rapidocr-onnxruntime
+pymupdf
+openpyxl
+pytest
+httpx
+reportlab
+qrcode

@@ -218,3 +218,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local environments and secrets
+.venv/
+.venv311/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.dev-credentials*
+__pycache__/
+.pytest_cache/
+
+# Private application data
+data/
+sourcefiles/
+AadharShield_QR_Test/
+
+aadharshield/.pytest_cache.code-workspace
