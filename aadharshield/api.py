@@ -14,8 +14,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import config, db, imgmask, service, masking, settings, vault
+from .logs import configure_logging, get_logger
 
 app = FastAPI(title="AadharShield", version="1.0")
+logger = get_logger("api")
 STATIC = Path(__file__).parent / "static"
 
 
@@ -540,16 +542,22 @@ def watcher_action(action: str, b: PathCheck, u=Depends(need("job.run"))):
 
 @app.on_event("startup")
 def _autostart_watchers():
+    configure_logging()
+    logger.info("AadharShield API startup initiated")
+
     try:
         if settings.get("watch_enabled") and config.ROLE != "unmask":
             for f in settings.get("watch_folders"):
                 try:
                     service.start_watcher(f)
-                except ValueError:
-                    pass
-    except Exception:
-        pass
+                    logger.info("Watcher started successfully")
+                except ValueError as exc:
+                    logger.warning("Watcher could not start: %s", exc)
 
+        logger.info("AadharShield API startup completed")
+
+    except Exception:
+        logger.exception("Error during AadharShield startup")
 
 @app.get("/api/health")
 def health():
