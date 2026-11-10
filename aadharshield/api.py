@@ -9,13 +9,16 @@ from pathlib import Path
 
 import bcrypt
 import jwt
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import (Depends, FastAPI, File, Header, HTTPException, Request,
+                     UploadFile)
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, db, imgmask, service, masking, settings, vault
+from . import config, db, imgmask, masking, service, settings, vault
+from .logs import configure_logging, get_logger
 
 app = FastAPI(title="AadharShield", version="1.0")
+logger = get_logger("api")
 STATIC = Path(__file__).parent / "static"
 
 
@@ -481,7 +484,6 @@ def get_settings(u=Depends(current_user)):
         return {"backfill_roots": s["backfill_roots"], "manifest": s["manifest"], "editable": False}
     raise HTTPException(403, "requires admin.settings or job.run")
 
-
 class SettingsPatch(BaseModel):
     masked_dir: str | None = None
     vault_dir: str | None = None
@@ -494,19 +496,42 @@ class SettingsPatch(BaseModel):
     mask_vid: bool | None = None
     default_unmask_limit: int | None = None
 
+    # Logging configuration
+    log_dir: str | None = None
+    log_file_name: str | None = None
+    log_max_bytes: int | None = Field(None, ge=1024, le=1073741824)
+    log_backup_count: int | None = Field(None, ge=0, le=100)
+
 
 @app.put("/api/settings")
 def put_settings(b: SettingsPatch, u=Depends(need("admin.settings"))):
     changes = b.model_dump(exclude_none=True)
+
     for k in ("backfill_roots", "watch_folders", "allowed_roots"):
         if k in changes:
             changes[k] = [x.strip() for x in changes[k] if x.strip()]
+
     try:
         new = settings.save(changes, u["username"])
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {**new, "editable": True}
 
+    logging_keys = (
+        "log_dir",
+        "log_file_name",
+        "log_max_bytes",
+        "log_backup_count",
+    )
+
+    if any(k in changes for k in logging_keys):
+        configure_logging(
+            log_dir=new["log_dir"],
+            file_name=new["log_file_name"],
+            max_bytes=new["log_max_bytes"],
+            backup_count=new["log_backup_count"],
+        )
+
+    return {**new, "editable": True}
 
 class PathCheck(BaseModel):
     path: str
@@ -537,20 +562,32 @@ def watcher_action(action: str, b: PathCheck, u=Depends(need("job.run"))):
         db.audit(c, u["username"], "watcher_" + action, b.path)
     return service.watcher_status()
 
-
 @app.on_event("startup")
 def _autostart_watchers():
+    log_settings = settings.get_all(True)
+
+    configure_logging(
+        log_dir=log_settings["log_dir"],
+        file_name=log_settings["log_file_name"],
+        max_bytes=log_settings["log_max_bytes"],
+        backup_count=log_settings["log_backup_count"],
+    )
+
+    logger.info("AadharShield API startup initiated")
+
     try:
         if settings.get("watch_enabled") and config.ROLE != "unmask":
             for f in settings.get("watch_folders"):
                 try:
                     service.start_watcher(f)
-                except ValueError:
-                    pass
+                    logger.info("Watcher started successfully")
+                except ValueError as exc:
+                    logger.warning("Watcher could not start: %s", exc)
+
+        logger.info("AadharShield API startup completed")
+
     except Exception:
-        pass
-
-
+        logger.exception("Error during AadharShield startup")
 @app.get("/api/health")
 def health():
     with db.connect() as c:

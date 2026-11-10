@@ -1,8 +1,14 @@
-import os
+﻿import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("AADHARSHIELD_DATA_DIR", ROOT / "data"))
+
+# Logging configuration
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "aadharshield.log"
+LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+LOG_BACKUP_COUNT = 5
 VAULT_DIR = DATA_DIR / "vault"
 OUT_DIR = DATA_DIR / "masked"
 DB_URL = os.getenv("AADHARSHIELD_DB_URL", "postgresql://aadharshield:aadharshield@localhost:5432/aadharshield")

@@ -1,5 +1,6 @@
 """Runtime settings editable from the console (stored in PostgreSQL, audited).
 Env/config values are only the first-run defaults."""
+
 import json
 import time
 from pathlib import Path
@@ -7,16 +8,21 @@ from pathlib import Path
 from . import config, db
 
 DEFAULTS = {
-    "masked_dir": str(config.OUT_DIR),     # where masked copies are written
-    "vault_dir": str(config.VAULT_DIR),    # where encrypted originals are written
-    "backfill_roots": [],                  # saved folders offered on the Back-fill page
-    "manifest": "",                        # default manifest CSV (extracted image -> source scan page)
-    "watch_folders": [],                   # drop-folders masked in place by the watcher
-    "watch_enabled": False,                # start those watchers automatically when the service starts
+    "masked_dir": str(config.OUT_DIR),
+    "vault_dir": str(config.VAULT_DIR),
+    "backfill_roots": [],
+    "manifest": "",
+    "watch_folders": [],
+    "watch_enabled": False,
     "allowed_roots": [],
-    "default_unmask_limit": 10,            # daily unmask allowance given to newly created users (per-user value can be changed afterwards)
-    "mask_qr": config.MASK_QR,             # also black out QR codes (old-format Aadhaar QR carries the full number)
-    "mask_vid": config.MASK_VID,           # also mask the first 12 digits of 16-digit Virtual IDs                   # if non-empty, back-fill/watch folders must sit inside one of these
+    "default_unmask_limit": 10,
+    "mask_qr": config.MASK_QR,
+    "mask_vid": config.MASK_VID,
+    # Logging configuration
+    "log_dir": str(config.LOG_DIR),
+    "log_file_name": "aadharshield.log",
+    "log_max_bytes": 10 * 1024 * 1024,
+    "log_backup_count": 5,
 }
 _cache = {"t": 0, "v": None}
 
@@ -30,7 +36,7 @@ def get_all(force=False):
             for r in c.execute("select key,value from settings"):
                 v[r["key"]] = r["value"]
     except Exception:
-        pass                                # DB not ready (first run): defaults
+        pass  # DB not ready (first run): defaults
     _cache.update(t=time.time(), v=v)
     return v
 
@@ -47,14 +53,20 @@ def out_dir() -> Path:
 
 def vault_dir() -> Path:
     p = Path(get("vault_dir"))
-    if config.ROLE != "unmask":              # an unmask server only points at the masking server's vault; never creates it
+    if (
+        config.ROLE != "unmask"
+    ):  # an unmask server only points at the masking server's vault; never creates it
         p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def managed_dirs():
     """Folders the tool itself writes into - never treated as input."""
-    return [config.DATA_DIR.resolve(), Path(get("masked_dir")).resolve(), Path(get("vault_dir")).resolve()]
+    return [
+        config.DATA_DIR.resolve(),
+        Path(get("masked_dir")).resolve(),
+        Path(get("vault_dir")).resolve(),
+    ]
 
 
 def inside(p: Path, parent: Path) -> bool:
@@ -65,8 +77,17 @@ def inside(p: Path, parent: Path) -> bool:
 def check_path(path: str, writable: bool = False, storage: bool = False):
     """Describe a folder for the UI 'Test path' button."""
     from . import masking
+
     p = Path(path.strip()) if path else None
-    out = {"path": path, "exists": False, "is_dir": False, "writable": None, "supported_files": None, "managed": False, "problems": []}
+    out = {
+        "path": path,
+        "exists": False,
+        "is_dir": False,
+        "writable": None,
+        "supported_files": None,
+        "managed": False,
+        "problems": [],
+    }
     if not p or not str(p).strip():
         out["problems"].append("empty path")
         return out
@@ -76,7 +97,9 @@ def check_path(path: str, writable: bool = False, storage: bool = False):
         if storage and not p.exists():
             out["note"] = "does not exist yet - it will be created when you save"
         else:
-            out["problems"].append("folder does not exist" if not p.exists() else "not a folder")
+            out["problems"].append(
+                "folder does not exist" if not p.exists() else "not a folder"
+            )
     else:
         out["managed"] = any(inside(p, m) for m in managed_dirs())
         if out["managed"] and not storage:
@@ -111,7 +134,9 @@ def validate(changes: dict):
     for k in ("masked_dir", "vault_dir"):
         if k in changes and config.ROLE == "unmask":
             if k == "vault_dir" and not Path(changes[k]).is_dir():
-                raise ValueError(f"vault_dir: {changes[k]} is not an existing folder (mount or copy the masking server's vault first)")
+                raise ValueError(
+                    f"vault_dir: {changes[k]} is not an existing folder (mount or copy the masking server's vault first)"
+                )
             continue
         if k in changes:
             p = Path(changes[k])
@@ -124,18 +149,67 @@ def validate(changes: dict):
                 raise ValueError(f"{k}: {p} is not writable")
     m, v = Path(cur["masked_dir"]).resolve(), Path(cur["vault_dir"]).resolve()
     if config.ROLE != "unmask" and (m == v or inside(m, v) or inside(v, m)):
-        raise ValueError("masked folder and vault folder must be separate, non-nested folders")
+        raise ValueError(
+            "masked folder and vault folder must be separate, non-nested folders"
+        )
     inputs = list(cur["backfill_roots"]) + list(cur["watch_folders"])
     for r in inputs:
         rp = Path(r)
         if inside(rp, m) or inside(rp, v) or inside(rp, config.DATA_DIR):
-            raise ValueError(f"{r} is inside the masked/vault/data area - input folders must be elsewhere")
+            raise ValueError(
+                f"{r} is inside the masked/vault/data area - input folders must be elsewhere"
+            )
         if inside(m, rp) or inside(v, rp):
-            raise ValueError(f"{r} contains the masked or vault folder - choose a folder that does not")
+            raise ValueError(
+                f"{r} contains the masked or vault folder - choose a folder that does not"
+            )
     if "default_unmask_limit" in changes:
         v = changes["default_unmask_limit"]
         if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 1000:
-            raise ValueError("default daily unmask limit must be a whole number from 0 to 1000")
+            raise ValueError(
+                "default daily unmask limit must be a whole number from 0 to 1000"
+            )
+            # Validate logging configuration
+    if "log_dir" in changes:
+        log_path = Path(changes["log_dir"])
+        if not str(changes["log_dir"]).strip() or not log_path.is_absolute():
+            raise ValueError("Log directory must be a valid absolute path")
+        try:
+            log_path.mkdir(parents=True, exist_ok=True)
+            test_file = log_path / ".aadharshield_write_test"
+            test_file.write_text("test", encoding="utf-8")
+            test_file.unlink()
+        except OSError as e:
+            raise ValueError(f"Log directory is not writable: {e}")
+
+    if "log_file_name" in changes:
+        name = changes["log_file_name"].strip()
+        if (
+            not name
+            or Path(name).name != name
+            or name in (".", "..")
+            or not name.lower().endswith(".log")
+        ):
+            raise ValueError("Log file name must be a valid .log filename")
+
+    if "log_max_bytes" in changes:
+        size = changes["log_max_bytes"]
+        if (
+            isinstance(size, bool)
+            or not isinstance(size, int)
+            or not 1024 <= size <= 1024 * 1024 * 1024
+        ):
+            raise ValueError("Maximum log size must be between 1 KB and 1024 MB")
+
+    if "log_backup_count" in changes:
+        count = changes["log_backup_count"]
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or not 0 <= count <= 100
+        ):
+            raise ValueError("Backup count must be a whole number from 0 to 100")
+
     allowed = [Path(a) for a in cur["allowed_roots"] if str(a).strip()]
     if allowed:
         for r in inputs:
@@ -150,8 +224,16 @@ def save(changes: dict, actor: str):
     old = get_all(True)
     with db.connect() as c:
         for k, v in changes.items():
-            c.execute("insert into settings(key,value) values(%s,%s) on conflict(key) do update set value=excluded.value",
-                      (k, json.dumps(v)))
-        db.audit(c, actor, "settings_update", "", {k: {"from": old.get(k), "to": v} for k, v in changes.items()})
+            c.execute(
+                "insert into settings(key,value) values(%s,%s) on conflict(key) do update set value=excluded.value",
+                (k, json.dumps(v)),
+            )
+        db.audit(
+            c,
+            actor,
+            "settings_update",
+            "",
+            {k: {"from": old.get(k), "to": v} for k, v in changes.items()},
+        )
     _cache["v"] = None
     return get_all(True)
